@@ -21,13 +21,15 @@ int errorLed = 13;
 int dataLed = 13;
 int toggle = 0;
 char txMsg[30];
-float temperature;
-float humidity;
 unsigned long lasttime=0;
 unsigned long diff;
 
 uint16_t command16 = 0;
-uint64_t command64 = 0;
+uint64_t command64 = 0; 
+
+short tempF;
+short tempC;
+short relHumid;
         
 void flashLed(int pin, int times, int wait) {
     
@@ -49,12 +51,16 @@ void doDht() {
   }
   else {
     if (lasttime == 0 || (diff > dht.getMinimumSamplingPeriod() && diff > dhtReadFreqMillis)) {
-  
-    humidity = dht.getHumidity();
-    temperature = dht.getTemperature();
-     snprintf(txMsg, sizeof(txMsg), "M:%s F:%d C:%d RH:%d", 
+    // Send the DHT data as a text string
+    // Note that arduino's sprintf doesn't support floats
+    // To keep 1 digit of decimal precision, I multiply by 10, then use modulo to get the mantissa
+    float c = dht.getTemperature();
+    tempF = (short) (dht.toFahrenheit(c)*10);
+    tempC = (short) (c*10);
+    relHumid = (short) (dht.getHumidity()*10);
+    snprintf(txMsg, sizeof(txMsg), "M:%s F:%d.%d C:%d.%d RH:%d.%d", 
       dht.getStatusString(),
-      (int)(dht.toFahrenheit(temperature)*10), (int)(temperature*10), (int)(humidity*10)); 
+      tempF/10, tempF%10, tempC/10, tempC%10, relHumid/10, relHumid%10); 
      
       if (*txMsg) {
         ZBTxRequest zbTx = ZBTxRequest(addr64, 
