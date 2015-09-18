@@ -2,6 +2,11 @@
 #include <XBee.h>
 #include <DHT.h>
 
+#define PIR_PIN 2
+#define DHT_PIN 5
+volatile boolean motionDetected;
+volatile long motionMillis;
+
 long dhtReadFreqMillis = 10000;
 DHT dht;
 
@@ -14,6 +19,7 @@ ModemStatusResponse msr = ModemStatusResponse();
 
 // SH + SL Address of receiving XBee
 XBeeAddress64 addr64 = XBeeAddress64(0, 0);
+XBeeAddress64 addr64_bcast = XBeeAddress64(0, 0xffff);
 ZBTxStatusResponse txStatus = ZBTxStatusResponse();
 
 int statusLed = 13;
@@ -90,10 +96,27 @@ void doDht() {
           flashLed(errorLed, 2, 50);
         }
       }
-      *txMsg = 0;
-     
+      *txMsg = 0;     
      lasttime = millis();
     }
+  }
+}
+
+long motionReportedMillis = 0;
+void reportMotion() {  
+  if (motionDetected && millis() - motionReportedMillis > 5000) { //rate-limit the motion reports
+    snprintf(txMsg, sizeof(txMsg), "LR MOTION %ld", motionMillis);
+     
+    if (*txMsg) {
+      uint8_t broadcastRadius = 0;
+      uint8_t frameId = 0; // no response required
+      uint8_t option = 0;
+      ZBTxRequest zbTx = ZBTxRequest(addr64_bcast, 0xfffe, broadcastRadius, option, (uint8_t *)txMsg, strnlen(txMsg, sizeof(txMsg)), frameId);
+      xbee.send(zbTx); 
+      motionReportedMillis = millis();
+    }
+    *txMsg = 0;
+    motionDetected = false;
   }
 }
 
@@ -103,23 +126,26 @@ void setup()
   pinMode(statusLed, OUTPUT);
   pinMode(errorLed, OUTPUT);
   pinMode(dataLed,  OUTPUT);
+  pinMode(PIR_PIN, INPUT);
+  
+  attachInterrupt(digitalPinToInterrupt(PIR_PIN),pirPinRisingISR,RISING);
+  motionDetected = false;
   Serial.begin(9600);
   xbee.begin(Serial);
   
   flashLed(statusLed, 3, 50);
-  dht.setup(2); // data pin 2
+  dht.setup(DHT_PIN); 
 }
 
 void loop() {
       
     doDht();
+    reportMotion();
     
     if (Serial.available() > 5) {
-      xbee.readPacket();
-      
+      xbee.readPacket();      
       if (xbee.getResponse().isAvailable()) {
-        // got something
-        
+        // got something        
         if (xbee.getResponse().getApiId() == ZB_RX_RESPONSE) {
           xbee.getResponse().getZBRxResponse(rx);              
           if (rx.getOption() == ZB_PACKET_ACKNOWLEDGED) {
@@ -203,8 +229,7 @@ void loop() {
         //nss.print("Error reading packet.  Error code: ");  
         //nss.println(xbee.getResponse().getErrorCode());
       }
-    }
-    
+    }    
 }
 
 
@@ -256,3 +281,12 @@ void answer(char* ans, byte val) {
 		Serial.write(frame[i]);
 	}
 }
+
+ 
+// interrupt handler
+ 
+void pirPinRisingISR() {
+  motionDetected = true;
+  motionMillis = millis();
+}
+
