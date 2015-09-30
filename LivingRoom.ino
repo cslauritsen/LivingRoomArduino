@@ -2,17 +2,21 @@
 #include <XBee.h>
 #include <DHT.h>
 
-#define PIR_PIN 2
+//#define PIR_PIN 2
 #define DHT_PIN 5
-#define ACRELAY_PIN 7
-#define MOTION_EXPIRY_THRESH_MILLIS 10L * 60L * 1000L
+//#define ACRELAY_PIN 7
+//#define PHOTORESISTOR_PIN 0
+//#define MOTION_EXPIRY_THRESH_MILLIS 10L * 60L * 1000L
 
-volatile boolean motionDetected;
-volatile long motionMillis;
+//volatile boolean motionDetected;
+//volatile long motionMillis;
 
-long motionReportedMillis = 0;
+byte rxPayloadSize = 84;
+
+//long motionReportedMillis = 0;
 long dhtReadFreqMillis = 120000;
-long motionReportFreqMillis = 60000;
+//long motionReportFreqMillis = 60000;
+//int lightLevel;
 DHT dht;
 
 IRsend irsend; // uses pin 3 on the UNO
@@ -31,7 +35,8 @@ int statusLed = 13;
 int errorLed = 13;
 int dataLed = 13;
 int toggle = 0;
-char txMsg[30];
+char txMsg[76]; // shortened by 4 for encryption and 4 for routing
+// TODO figure out how to query the ATNP register to get the real value
 long dhtLastMillis=0;
 long diff;
 
@@ -46,15 +51,14 @@ void setup() {
   pinMode(statusLed, OUTPUT);
   pinMode(errorLed, OUTPUT);
   pinMode(dataLed,  OUTPUT);
-  pinMode(ACRELAY_PIN,  OUTPUT);
-  pinMode(PIR_PIN, INPUT);
+//  pinMode(ACRELAY_PIN,  OUTPUT);
+//  pinMode(PIR_PIN, INPUT);
   
   
-  digitalWrite(ACRELAY_PIN, LOW);  
+//  digitalWrite(ACRELAY_PIN, LOW);  
   
-//  attachInterrupt(digitalPinToInterrupt(PIR_PIN), isrPir, RISING);
-  attachInterrupt(digitalPinToInterrupt(PIR_PIN), isrPirChanged, CHANGE);
-  motionDetected = false;
+//  attachInterrupt(digitalPinToInterrupt(PIR_PIN), isrPirChanged, CHANGE);
+//  motionDetected = false;
   Serial.begin(9600);
   xbee.begin(Serial);
   
@@ -93,9 +97,9 @@ void doDht() {
       tempF = (short) (dht.toFahrenheit(c)*10);
       relHumid = (short) (dht.getHumidity()*10);
       interrupts();
-      snprintf(txMsg, sizeof(txMsg), "M:%s F:%d.%d RH:%d.%d", 
-      dht.getStatusString(),
-      tempF/10, tempF%10, relHumid/10, relHumid%10); 
+      snprintf(txMsg, sizeof(txMsg), "dht-status:%s\ndht-F:%d.%d\ndht-RH:%d.%d\n", 
+          dht.getStatusString(),
+          tempF/10, tempF%10, relHumid/10, relHumid%10); 
      
       if (*txMsg) {
         uint8_t broadcastRadius = 0;
@@ -110,39 +114,40 @@ void doDht() {
   }
 }
 
-void reportMotion() {  
-  long mils = millis();
-  if (mils < 30000) {
-    return; // allow it to calibrate
-  }
-  if (mils - motionReportedMillis >= motionReportFreqMillis) { //rate-limit the motion reports
-    snprintf(txMsg, sizeof(txMsg), "LR MOTION %s", motionDetected ? "Y" : "N");     
-    if (*txMsg) {
-      uint8_t broadcastRadius = 0;
-      uint8_t frameId = 0; // no response required
-      uint8_t option = 0;
-      ZBTxRequest zbTx = ZBTxRequest(addr64_bcast, 0xfffe, broadcastRadius, option, (uint8_t *)txMsg, strnlen(txMsg, sizeof(txMsg)), frameId);
-      xbee.send(zbTx); 
-      motionReportedMillis = mils;
-    }
-    *txMsg = 0;
-  }
-}
+//void reportMotion() {  
+//  long mils = millis();
+//  if (mils < 30000) {
+//    return; // allow it to calibrate
+//  }
+//  if (mils - motionReportedMillis >= motionReportFreqMillis) { //rate-limit the motion reports
+//    lightLevel = analogRead(PHOTORESISTOR_PIN);  
+//    snprintf(txMsg, sizeof(txMsg), "pir-presence:%s\nlight:%d\n", motionDetected ? "Y" : "N", lightLevel);     
+//    if (*txMsg) {
+//      uint8_t broadcastRadius = 0;
+//      uint8_t frameId = 0; // no response required
+//      uint8_t option = 0;
+//      ZBTxRequest zbTx = ZBTxRequest(addr64_bcast, 0xfffe, broadcastRadius, option, (uint8_t *)txMsg, strnlen(txMsg, sizeof(txMsg)), frameId);
+//      xbee.send(zbTx); 
+//      motionReportedMillis = mils;
+//    }
+//    *txMsg = 0;
+//  }
+//}
 
 
 void loop() {   
     long mils = millis();
-    if(motionDetected && mils - motionMillis > MOTION_EXPIRY_THRESH_MILLIS) {
-      motionDetected = false;
-    }
-  
-    if (!motionDetected) {
-      digitalWrite(ACRELAY_PIN, LOW);
-    }
+//    if(motionDetected && mils - motionMillis > MOTION_EXPIRY_THRESH_MILLIS) {
+//      motionDetected = false;
+//    }
+//  
+//    if (!motionDetected) {
+//      digitalWrite(ACRELAY_PIN, LOW);
+//    }
     
     if (mils > 30000) {
       doDht();
-      reportMotion();
+//      reportMotion();
     }
     
     xbee.readPacket(); // always returns quickly
@@ -190,20 +195,39 @@ void handleRxResponse() {
   int nbits;
   int i=0;
   *txMsg = 0;
+  int datLen = rx.getDataLength();
+  int repeats = 0;
+  int nbytes = 0;
   switch(rx.getData(d++)) {
     case 'S': // SONY
       command16 = 0;
-      nbits = rx.getData(d++); // should be 12 (0x0c)            
-      for (int shiftbytes = 1; shiftbytes >=0; shiftbytes--) {
+      nbits = rx.getData(d++); // should be 12 (0x0c) 
+      nbytes = nbits/8 + 1;      
+      for (int shiftbytes = nbytes; shiftbytes >=0; shiftbytes--) {
         command16 |= rx.getData(d++) << (8 * shiftbytes);
       }
-      if (command16 > 0) {
-        for (int i = 0; i < 3; i++) {
-          irsend.sendSony(command16, nbits); // Sony TV power code
-          delay(40);
-        }              
+      for (int r = d; r < rx.getDataLength(); r++) {
+        byte b = rx.getData(r);
+        switch(b) {
+          case 'x': // repetition code
+            repeats = 0xff & rx.getData(++r);
+            break;
+          default:
+            break;
+        }
       }
-      snprintf(txMsg, sizeof(txMsg), "S:%x", command16);            
+      if (command16 > 0) {
+        do {
+          for (int i = 0; i < 3; i++) {
+            irsend.sendSony(command16, nbits); // Sony TV power code
+            delay(40);
+          }   
+          if (repeats) {
+            delay(150); // not sure how long to wait before it considers it another button press
+          }
+        } while(repeats-- > 0);        
+      }
+      snprintf(txMsg, sizeof(txMsg), "sony-cmd:%x\n");            
       break;
       
     case 'X': // XBOX (RC6)            
@@ -218,7 +242,7 @@ void handleRxResponse() {
       // holding down the button
       command64 = toggle ? command64 ^ 0x8000LL : command64;
       irsend.sendRC6(command64, nbits);
-      snprintf(txMsg, sizeof(txMsg), "X:%x", command64);
+      snprintf(txMsg, sizeof(txMsg), "rc6-cmd:%x\n", command64);
       
       toggle = 1 - toggle;
       break;   
@@ -254,18 +278,18 @@ void handleRxResponse() {
 //}
 
 
-// interrupt handler 
-void isrPirChanged() {
-  if (digitalRead(PIR_PIN) == LOW) {
-    digitalWrite(ACRELAY_PIN, LOW); 
-  }
-  else {
-    motionMillis = millis();
-    // allow PIR sensor to calibrate before using its readings  
-    if (motionMillis > 30000) {
-      motionDetected = true;
-      digitalWrite(ACRELAY_PIN, HIGH);  
-    }
-  }
-}
+//// interrupt handler 
+//void isrPirChanged() {
+//  if (digitalRead(PIR_PIN) == LOW) {
+//    digitalWrite(ACRELAY_PIN, LOW); 
+//  }
+//  else {
+//    motionMillis = millis();
+//    // allow PIR sensor to calibrate before using its readings  
+//    if (motionMillis > 30000) {
+//      motionDetected = true;
+//      digitalWrite(ACRELAY_PIN, HIGH);  
+//    }
+//  }
+//}
 
