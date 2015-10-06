@@ -197,25 +197,14 @@ void handleRxResponse() {
   *txMsg = 0;
   int datLen = rx.getDataLength();
   int repeats = 0;
-  int nbytes = 0;
   switch(rx.getData(d++)) {
     case 'S': // SONY
       command16 = 0;
       nbits = rx.getData(d++); // should be 12 (0x0c) 
-      nbytes = nbits/8 + 1;      
-      for (int shiftbytes = nbytes; shiftbytes >=0; shiftbytes--) {
+      for (int shiftbytes = nbits/8; shiftbytes >=0; shiftbytes--) {
         command16 |= rx.getData(d++) << (8 * shiftbytes);
       }
-      for (int r = d; r < rx.getDataLength(); r++) {
-        byte b = rx.getData(r);
-        switch(b) {
-          case 'x': // repetition code
-            repeats = 0xff & rx.getData(++r);
-            break;
-          default:
-            break;
-        }
-      }
+      repeats = 0xff && rx.getData(d++);
       if (command16 > 0) {
         do {
           for (int i = 0; i < 3; i++) {
@@ -225,9 +214,9 @@ void handleRxResponse() {
           if (repeats) {
             delay(150); // not sure how long to wait before it considers it another button press
           }
-        } while(repeats-- > 0);        
+        } while(--repeats > 0);        
       }
-      snprintf(txMsg, sizeof(txMsg), "sony-cmd:%x\n");            
+      snprintf(txMsg, sizeof(txMsg), "sony-cmd:0x%x\n", command16);            
       break;
       
     case 'X': // XBOX (RC6)            
