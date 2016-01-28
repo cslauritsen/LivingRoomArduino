@@ -230,41 +230,10 @@ void handleRxResponse() {
         zmsg.data_buf[i] = rx.getData(i);
     }
 
-    switch(zmsg.lrMsg.msgType) {
-        case 'i': 
-            for (int i=0; i < IR_COMMAND_LIST_LEN; i++) {
-                irCmd = &zmsg.lrMsg.d.ir_cmds[i];
-                switch(irCmd->proto) {
-                    case 'S':  // Sony 
-                        for (int r=0; r < irCmd->repeats; r++) {
-                            irsend.sendSony(irCmd->command, irCmd->nbits);
-                            if (irCmd->repeatDelay) {
-                                delay(irCmd->repeatDelay);
-                            }
-                        }
-                        snprintf(txMsg, sizeof(txMsg), "sony-cmd:0x%x\n", irCmd->command);            
-                        break;
+    LrMsg *lrMsg = &zmsg.lrMsg;
+    IrCmd *irCmd = NULL;
 
-                    case 'N':  // NEC
-                        for (int r=0; r < irCmd->repeats; r++) {
-                            irsend.sendNEC(irCmd->command, irCmd->nbits);
-                            if (irCmd->repeatDelay) {
-                                delay(irCmd->repeatDelay);
-                            }
-                        }
-                        snprintf(txMsg, sizeof(txMsg), "sony-cmd:0x%x\n", irCmd->command);            
-                        break;
-
-                    default:
-                        break;
-                }
-            }
-            break;
-        case 'c': // config command
-            break;
-        default:
-            break;
-    }
+    handleLrMsg(lrMsg, txMsg, sizeof(txMsg));
 
     if (*txMsg) {
         uint8_t broadcastRadius = 0;
@@ -274,4 +243,13 @@ void handleRxResponse() {
         xbee.send(zbTx); // after sending a tx request, we expect a status response      
     }
     *txMsg = 0;     
+}
+
+
+void sony(long command, int nbits) {
+    irsend.sendSony(command, nbits);
+}
+
+void nec(long command, int nbits) {
+    irsend.sendNEC(command, nbits);
 }
